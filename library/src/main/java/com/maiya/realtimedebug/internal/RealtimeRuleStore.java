@@ -5,13 +5,16 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * In-memory mock / throttle config pushed from PC console.
+ * In-memory mock / rewrite / throttle config pushed from PC console.
  */
 public final class RealtimeRuleStore {
 
@@ -143,37 +146,91 @@ public final class RealtimeRuleStore {
 
     public static final class MockRule {
         public final String id;
+        public final String group;
         public final boolean enabled;
         public final int priority;
         public final String method;
         public final String urlContains;
-        public final String action; // mock | modify | abort
+        /** mock | abort | rewrite | modify(legacy→mock) */
+        public final String action;
         public final int delayMs;
         public final int statusCode;
         public final String responseBody;
         public final String contentType;
         public final AtomicInteger remaining; // -1 = infinite
 
-        public MockRule(String id, boolean enabled, int priority, String method, String urlContains,
-                        String action, int delayMs, int statusCode, String responseBody,
-                        String contentType, int times) {
+        /** rewrite: optional new URL (empty = keep) */
+        public final String rewriteUrl;
+        /** rewrite: optional new method (empty = keep) */
+        public final String rewriteMethod;
+        /** rewrite: optional new body; null means keep original */
+        public final String rewriteBody;
+        public final boolean rewriteBodySet;
+        /** rewrite: headers to set/overwrite */
+        public final Map<String, String> setHeaders;
+        /** rewrite: header names to remove */
+        public final List<String> removeHeaders;
+
+        public MockRule(String id, String group, boolean enabled, int priority, String method,
+                        String urlContains, String action, int delayMs, int statusCode,
+                        String responseBody, String contentType, int times,
+                        String rewriteUrl, String rewriteMethod, String rewriteBody,
+                        boolean rewriteBodySet, Map<String, String> setHeaders,
+                        List<String> removeHeaders) {
             this.id = id == null ? "" : id;
+            this.group = group == null ? "" : group;
             this.enabled = enabled;
             this.priority = priority;
             this.method = method == null ? "" : method.trim().toUpperCase();
             this.urlContains = urlContains == null ? "" : urlContains;
-            this.action = action == null ? "mock" : action;
+            String act = action == null ? "mock" : action;
+            if ("modify".equalsIgnoreCase(act)) {
+                act = "mock";
+            }
+            this.action = act;
             this.delayMs = Math.max(0, delayMs);
             this.statusCode = statusCode <= 0 ? 200 : statusCode;
             this.responseBody = responseBody == null ? "" : responseBody;
             this.contentType = contentType == null || contentType.isEmpty()
                     ? "application/json; charset=utf-8" : contentType;
             this.remaining = new AtomicInteger(times);
+            this.rewriteUrl = rewriteUrl == null ? "" : rewriteUrl;
+            this.rewriteMethod = rewriteMethod == null ? "" : rewriteMethod.trim().toUpperCase();
+            this.rewriteBody = rewriteBody;
+            this.rewriteBodySet = rewriteBodySet;
+            this.setHeaders = setHeaders == null
+                    ? Collections.emptyMap() : Collections.unmodifiableMap(new LinkedHashMap<>(setHeaders));
+            this.removeHeaders = removeHeaders == null
+                    ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(removeHeaders));
         }
 
         public static MockRule fromJson(JSONObject o) {
+            Map<String, String> setHeaders = new LinkedHashMap<>();
+            JSONObject headersObj = o.optJSONObject("setHeaders");
+            if (headersObj == null) {
+                headersObj = o.optJSONObject("rewriteHeaders");
+            }
+            if (headersObj != null) {
+                Iterator<String> keys = headersObj.keys();
+                while (keys.hasNext()) {
+                    String k = keys.next();
+                    setHeaders.put(k, headersObj.optString(k, ""));
+                }
+            }
+            List<String> removeHeaders = new ArrayList<>();
+            JSONArray rem = o.optJSONArray("removeHeaders");
+            if (rem != null) {
+                for (int i = 0; i < rem.length(); i++) {
+                    String name = rem.optString(i, "");
+                    if (!name.isEmpty()) {
+                        removeHeaders.add(name);
+                    }
+                }
+            }
+            boolean bodySet = o.has("rewriteBody");
             return new MockRule(
                     o.optString("id", "r" + System.currentTimeMillis()),
+                    o.optString("group", ""),
                     o.optBoolean("enabled", true),
                     o.optInt("priority", 0),
                     o.optString("method", ""),
@@ -183,7 +240,13 @@ public final class RealtimeRuleStore {
                     o.optInt("statusCode", 200),
                     o.optString("responseBody", o.optString("body", "")),
                     o.optString("contentType", "application/json; charset=utf-8"),
-                    o.optInt("times", -1)
+                    o.optInt("times", -1),
+                    o.optString("rewriteUrl", ""),
+                    o.optString("rewriteMethod", ""),
+                    bodySet ? o.optString("rewriteBody", "") : null,
+                    bodySet,
+                    setHeaders,
+                    removeHeaders
             );
         }
 
@@ -191,6 +254,7 @@ public final class RealtimeRuleStore {
             JSONObject o = new JSONObject();
             try {
                 o.put("id", id);
+                o.put("group", group);
                 o.put("enabled", enabled);
                 o.put("priority", priority);
                 o.put("method", method);
@@ -201,6 +265,21 @@ public final class RealtimeRuleStore {
                 o.put("responseBody", responseBody);
                 o.put("contentType", contentType);
                 o.put("times", remaining.get());
+                o.put("rewriteUrl", rewriteUrl);
+                o.put("rewriteMethod", rewriteMethod);
+                if (rewriteBodySet) {
+                    o.put("rewriteBody", rewriteBody == null ? "" : rewriteBody);
+                }
+                JSONObject headers = new JSONObject();
+                for (Map.Entry<String, String> e : setHeaders.entrySet()) {
+                    headers.put(e.getKey(), e.getValue());
+                }
+                o.put("setHeaders", headers);
+                JSONArray rem = new JSONArray();
+                for (String name : removeHeaders) {
+                    rem.put(name);
+                }
+                o.put("removeHeaders", rem);
             } catch (Exception ignored) {
             }
             return o;

@@ -73,7 +73,8 @@ start-console.bat
 |------|------|
 | 抓包 | 过滤、Replay、cURL、导出 JSON/HAR |
 | 断言 | 状态码 / JSONPath / 耗时（控制台本地） |
-| Mock | 改状态码/Body、Abort、次数、延迟（同步到手机） |
+| Mock | 按 URL 匹配返回；支持分组、导入/导出；请求详情可一键生成 |
+| Rewrite | 改 URL/方法/请求头/Body 后仍走真实网络 |
 | 弱网 | 3G / 慢网 / 丢包 / 自定义延迟与失败率 |
 | 观测 | 实时日志、CPU/内存/线程、约 1fps 画面 |
 | 发现 | 同网 UID+机型列表点选；USB adb forward |

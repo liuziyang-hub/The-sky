@@ -85,8 +85,10 @@ public final class RealtimeNetworkInterceptor implements Interceptor {
             event.put("requestBody", requestBodyPreview != null ? requestBodyPreview : "");
             event.put("responseBody", responseBodyPreview);
             boolean mocked = "1".equals(response.header(RealtimeMockInterceptor.HEADER_MOCKED));
+            boolean rewritten = "1".equals(response.header(RealtimeMockInterceptor.HEADER_REWRITTEN));
             event.put("mocked", mocked);
-            if (mocked) {
+            event.put("rewritten", rewritten);
+            if (mocked || rewritten) {
                 event.put("ruleId", response.header(RealtimeMockInterceptor.HEADER_RULE_ID));
             }
             String throttle = response.header(RealtimeMockInterceptor.HEADER_THROTTLE_MS);

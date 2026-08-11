@@ -389,7 +389,36 @@
       background: #fafafa;
     }
     #mockRuleList .tool-row {
-      grid-template-columns: auto 1fr 72px 90px 72px 80px 100px auto;
+      grid-template-columns: auto 90px 1fr 72px 100px 72px 80px 100px auto;
+    }
+    .mock-group {
+      margin-bottom: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      background: #fff;
+    }
+    .mock-group-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      margin: 0 0 8px 4px;
+    }
+    .rewrite-fields {
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 8px;
+      padding: 8px;
+      border: 1px dashed var(--line-strong);
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    .rewrite-fields textarea {
+      min-height: 56px;
+      font: 12px/1.4 var(--mono);
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      padding: 8px;
     }
     .tool-row textarea {
       grid-column: 1 / -1;
@@ -644,11 +673,14 @@
       </div>
       <div class="pane tool-pane" id="paneMock">
         <div class="tool-actions">
-          <button id="btnAddMock" type="button">新增 Mock</button>
+          <button id="btnAddMock" type="button">新增规则</button>
           <button id="btnSyncMock" class="primary" type="button">同步到手机</button>
+          <button id="btnExportMock" type="button">导出规则</button>
+          <button id="btnImportMock" type="button">导入规则</button>
           <button id="btnClearMock" type="button">清空</button>
+          <input id="mockImportFile" type="file" accept="application/json,.json" hidden />
         </div>
-        <p class="hint">按 URL 包含匹配；Mock 直接返回，Abort 抛失败。需先连接手机再同步。</p>
+        <p class="hint">按 URL 包含匹配。Mock=直接返回；Abort=抛失败；Rewrite=改请求后走真实网络。支持分组；可从请求详情一键生成。需先连接手机再同步。</p>
         <div id="mockRuleList"></div>
       </div>
       <div class="pane tool-pane" id="paneThrottle">
@@ -1067,6 +1099,7 @@
       paneThrottle.classList.toggle("on", mode === "throttle");
       paneScreen.classList.toggle("on", mode === "screen");
     }
+    window.setRight = setRight;
     function matchNet(ev) {
       const method = (netMethod.value || "").toUpperCase();
       if (method && String(ev.method || "").toUpperCase() !== method) return false;
@@ -1107,10 +1140,11 @@
         const tr = document.createElement("tr");
         tr.className = "clickable" + (index === activeIndex ? " on" : "");
         const mockPill = ev.mocked ? `<span class="pill pill-mock">MOCK</span> ` : "";
+        const rewritePill = ev.rewritten ? `<span class="pill pill-warn">RW</span> ` : "";
         tr.innerHTML =
           `<td class="mono">${formatTime(ev.ts)}</td>` +
           `<td><span class="pill pill-method">${esc(ev.method || "?")}</span></td>` +
-          `<td>${mockPill}<span class="pill ${pillClass(ev.code)}">${ev.code}</span></td>` +
+          `<td>${mockPill}${rewritePill}<span class="pill ${pillClass(ev.code)}">${ev.code}</span></td>` +
           `<td class="mono">${ev.durationMs != null ? ev.durationMs + " ms" : "—"}</td>` +
           `<td class="url-cell">${highlight(ev.url || "", q)}</td>`;
         tr.onclick = () => showDetail(index);
@@ -1129,13 +1163,17 @@
       detailEl.innerHTML =
         `<div class="tool-actions" style="margin-bottom:12px">
           <button type="button" id="btnReplayOne" class="primary">Replay</button>
+          <button type="button" id="btnMakeMock">生成 Mock</button>
+          <button type="button" id="btnMakeRewrite">生成 Rewrite</button>
           <button type="button" id="btnCopyCurl">复制 cURL</button>
           ${ev.mocked ? `<span class="pill pill-mock">MOCK ${esc(ev.ruleId || "")}</span>` : ""}
+          ${ev.rewritten ? `<span class="pill pill-warn">REWRITE ${esc(ev.ruleId || "")}</span>` : ""}
           ${ev.throttledMs ? `<span class="pill pill-warn">throttle ${esc(ev.throttledMs)}ms</span>` : ""}
         </div>` +
         `<h3>概要</h3><pre>${esc(pretty({
           method: ev.method, url: ev.url, code: ev.code,
           durationMs: ev.durationMs, mocked: ev.mocked || undefined,
+          rewritten: ev.rewritten || undefined,
           ruleId: ev.ruleId || undefined, throttledMs: ev.throttledMs || undefined,
           error: ev.error || undefined, ts: ev.ts
         }))}</pre>` +
@@ -1145,6 +1183,8 @@
         `<h3>Response Body</h3><pre>${esc(pretty(ev.responseBody))}</pre>` +
         `<h3>cURL</h3><pre>${esc(curl)}</pre>`;
       $("btnReplayOne").onclick = () => window.RealtimeTools && window.RealtimeTools.replay(ev);
+      $("btnMakeMock").onclick = () => window.RealtimeTools && window.RealtimeTools.createRuleFromEvent(ev, "mock");
+      $("btnMakeRewrite").onclick = () => window.RealtimeTools && window.RealtimeTools.createRuleFromEvent(ev, "rewrite");
       $("btnCopyCurl").onclick = async () => {
         try {
           await navigator.clipboard.writeText(curl);

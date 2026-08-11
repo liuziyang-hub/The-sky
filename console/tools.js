@@ -199,7 +199,31 @@
 
   function pushMockRules() {
     saveJson(STORAGE_MOCK, mockRules);
-    sendCmd({ action: "set_mock_rules", rules: mockRules });
+    const rules = mockRules.map((r) => {
+      const out = {
+        id: r.id,
+        group: r.group || "",
+        enabled: r.enabled !== false,
+        priority: r.priority || 0,
+        urlContains: r.urlContains || "",
+        method: r.method || "",
+        action: r.action || "mock",
+        statusCode: Number(r.statusCode) || 200,
+        delayMs: Number(r.delayMs) || 0,
+        times: r.times == null ? -1 : Number(r.times),
+        responseBody: r.responseBody || "",
+        contentType: r.contentType || "application/json; charset=utf-8",
+        rewriteUrl: r.rewriteUrl || "",
+        rewriteMethod: r.rewriteMethod || "",
+        setHeaders: r.setHeaders || {},
+        removeHeaders: r.removeHeaders || []
+      };
+      if (r.action === "rewrite" && r.rewriteBodyEnabled) {
+        out.rewriteBody = r.rewriteBody ?? "";
+      }
+      return out;
+    });
+    sendCmd({ action: "set_mock_rules", rules });
   }
 
   function pushThrottle() {
@@ -266,29 +290,188 @@
     saveJson(STORAGE_ASSERT, assertRules);
   }
 
+  function pathHintFromUrl(url) {
+    try {
+      const u = new URL(url);
+      const parts = u.pathname.split("/").filter(Boolean);
+      return parts.slice(-2).join("/") || u.pathname || url;
+    } catch (e) {
+      const s = String(url || "");
+      const i = s.indexOf("?");
+      const path = i >= 0 ? s.slice(0, i) : s;
+      const parts = path.split("/").filter(Boolean);
+      return parts.slice(-2).join("/") || path;
+    }
+  }
+
+  function headersToLines(headers) {
+    if (!headers || typeof headers !== "object") return "";
+    return Object.keys(headers)
+      .filter((k) => !String(k).startsWith("_"))
+      .map((k) => `${k}: ${headers[k]}`)
+      .join("\n");
+  }
+
+  function linesToHeaders(text) {
+    const out = {};
+    String(text || "").split(/\r?\n/).forEach((line) => {
+      const t = line.trim();
+      if (!t) return;
+      const i = t.indexOf(":");
+      if (i <= 0) return;
+      out[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+    });
+    return out;
+  }
+
+  function createRuleFromEvent(ev, action) {
+    if (!ev || ev.type !== "http") {
+      global.setStatus("请先选择一条 HTTP 请求", "err");
+      return;
+    }
+    collectMockFromDom();
+    const hint = pathHintFromUrl(ev.url);
+    const ct = (ev.responseHeaders && (ev.responseHeaders["Content-Type"] || ev.responseHeaders["content-type"]))
+      || (ev.requestHeaders && (ev.requestHeaders["Content-Type"] || ev.requestHeaders["content-type"]))
+      || "application/json; charset=utf-8";
+    const rule = {
+      id: uid(),
+      group: "",
+      enabled: true,
+      priority: 100,
+      urlContains: hint,
+      method: (ev.method || "").toUpperCase(),
+      action: action === "rewrite" ? "rewrite" : "mock",
+      statusCode: Number(ev.code) || 200,
+      delayMs: 0,
+      times: -1,
+      responseBody: action === "rewrite" ? "" : String(ev.responseBody || ""),
+      contentType: ct,
+      rewriteUrl: "",
+      rewriteMethod: "",
+      rewriteBody: action === "rewrite" ? String(ev.requestBody || "") : "",
+      rewriteBodyEnabled: action === "rewrite" && !!(ev.requestBody || ""),
+      setHeaders: action === "rewrite" ? (ev.requestHeaders || {}) : {},
+      removeHeaders: []
+    };
+    mockRules.unshift(rule);
+    saveJson(STORAGE_MOCK, mockRules);
+    renderMockPanel();
+    if (typeof global.setRight === "function") global.setRight("mock");
+    else {
+      const tab = document.querySelector('[data-right="mock"]');
+      if (tab) tab.click();
+    }
+    global.setStatus(action === "rewrite" ? "已生成 Rewrite 规则，请确认后同步" : "已生成 Mock 规则，请确认后同步", "ok");
+  }
+
+  function exportMockRules() {
+    collectMockFromDom();
+    const blob = new Blob([JSON.stringify({ version: 1, rules: mockRules }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `realtime-mock-rules-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    global.setStatus("规则已导出", "ok");
+  }
+
+  function importMockRules(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result || "{}"));
+        const list = Array.isArray(data) ? data : (data.rules || []);
+        if (!Array.isArray(list)) throw new Error("invalid rules");
+        collectMockFromDom();
+        const imported = list.map((r) => ({
+          id: r.id || uid(),
+          group: r.group || "",
+          enabled: r.enabled !== false,
+          priority: Number(r.priority) || 0,
+          urlContains: r.urlContains || r.url || "",
+          method: r.method || "",
+          action: r.action || "mock",
+          statusCode: Number(r.statusCode) || 200,
+          delayMs: Number(r.delayMs) || 0,
+          times: r.times == null ? -1 : Number(r.times),
+          responseBody: r.responseBody || r.body || "",
+          contentType: r.contentType || "application/json; charset=utf-8",
+          rewriteUrl: r.rewriteUrl || "",
+          rewriteMethod: r.rewriteMethod || "",
+          rewriteBody: r.rewriteBody || "",
+          rewriteBodyEnabled: !!r.rewriteBodyEnabled || (r.action === "rewrite" && Object.prototype.hasOwnProperty.call(r, "rewriteBody")),
+          setHeaders: r.setHeaders || r.rewriteHeaders || {},
+          removeHeaders: Array.isArray(r.removeHeaders) ? r.removeHeaders : []
+        }));
+        mockRules = mockRules.concat(imported);
+        saveJson(STORAGE_MOCK, mockRules);
+        renderMockPanel();
+        global.setStatus(`已导入 ${imported.length} 条规则`, "ok");
+      } catch (e) {
+        global.setStatus("导入失败: JSON 格式不正确", "err");
+      }
+    };
+    reader.readAsText(file);
+  }
+
   function renderMockPanel() {
     const list = document.getElementById("mockRuleList");
     if (!list) return;
-    list.innerHTML = mockRules.map((r, i) => `
-      <div class="tool-row">
+    const groups = {};
+    mockRules.forEach((r, i) => {
+      const g = (r.group || "").trim() || "未分组";
+      if (!groups[g]) groups[g] = [];
+      groups[g].push({ r, i });
+    });
+    const groupNames = Object.keys(groups);
+    list.innerHTML = groupNames.length ? groupNames.map((gName) => {
+      const rows = groups[gName].map(({ r, i }) => {
+        const isRewrite = r.action === "rewrite";
+        const setHeadersText = typeof r.setHeaders === "string"
+          ? r.setHeaders
+          : headersToLines(r.setHeaders || {});
+        return `
+      <div class="tool-row" data-mock-index="${i}">
         <label><input type="checkbox" data-mock-en="${i}" ${r.enabled !== false ? "checked" : ""}/>启用</label>
+        <input data-mock-group="${i}" value="${escAttr(r.group || "")}" placeholder="分组" style="width:90px" />
         <input data-mock-url="${i}" value="${escAttr(r.urlContains || "")}" placeholder="URL 包含" />
         <input data-mock-method="${i}" value="${escAttr(r.method || "")}" placeholder="方法" style="width:72px" />
         <select data-mock-action="${i}">
-          <option value="mock" ${r.action === "mock" ? "selected" : ""}>Mock</option>
+          <option value="mock" ${r.action === "mock" || !r.action ? "selected" : ""}>Mock</option>
           <option value="abort" ${r.action === "abort" ? "selected" : ""}>Abort</option>
+          <option value="rewrite" ${isRewrite ? "selected" : ""}>Rewrite</option>
         </select>
-        <input data-mock-code="${i}" value="${escAttr(r.statusCode ?? 200)}" placeholder="状态码" style="width:72px" />
+        <input data-mock-code="${i}" value="${escAttr(r.statusCode ?? 200)}" placeholder="状态码" style="width:72px" ${isRewrite ? "disabled" : ""} />
         <input data-mock-delay="${i}" value="${escAttr(r.delayMs ?? 0)}" placeholder="延迟ms" style="width:80px" />
         <input data-mock-times="${i}" value="${escAttr(r.times ?? -1)}" placeholder="次数(-1无限)" style="width:100px" />
         <button type="button" data-mock-del="${i}">删</button>
-        <textarea data-mock-body="${i}" placeholder="响应 Body JSON">${window.esc ? window.esc(r.responseBody || "") : (r.responseBody || "")}</textarea>
-      </div>`).join("") || `<div class="empty">暂无 Mock。点「新增 Mock」后「同步到手机」。</div>`;
+        <textarea data-mock-body="${i}" placeholder="${isRewrite ? "Rewrite 时此项为 Mock 响应（可空）" : "响应 Body JSON"}" ${isRewrite ? "style=\"opacity:.5\"" : ""}>${window.esc ? window.esc(r.responseBody || "") : (r.responseBody || "")}</textarea>
+        <div class="rewrite-fields" style="${isRewrite ? "" : "display:none"}">
+          <input data-mock-rw-url="${i}" value="${escAttr(r.rewriteUrl || "")}" placeholder="改写 URL（空=保持）" />
+          <input data-mock-rw-method="${i}" value="${escAttr(r.rewriteMethod || "")}" placeholder="改写方法（空=保持）" style="width:100px" />
+          <textarea data-mock-rw-headers="${i}" placeholder="改写/追加请求头，每行 Key: Value">${escAttr(setHeadersText)}</textarea>
+          <textarea data-mock-rw-body="${i}" placeholder="改写请求 Body">${window.esc ? window.esc(r.rewriteBody || "") : (r.rewriteBody || "")}</textarea>
+          <label style="font-size:12px;color:var(--muted)"><input type="checkbox" data-mock-rw-body-on="${i}" ${r.rewriteBodyEnabled ? "checked" : ""}/>改写 Request Body（勾选后才会替换；不勾选则保持原 Body）</label>
+          <input data-mock-rw-remove="${i}" value="${escAttr((r.removeHeaders || []).join(", "))}" placeholder="删除请求头，逗号分隔" />
+        </div>
+      </div>`;
+      }).join("");
+      return `<div class="mock-group"><div class="mock-group-title">${window.esc ? window.esc(gName) : gName} · ${groups[gName].length}</div>${rows}</div>`;
+    }).join("") : `<div class="empty">暂无规则。可点「新增规则」，或从请求详情「生成 Mock / Rewrite」。</div>`;
 
     list.querySelectorAll("[data-mock-del]").forEach((btn) => {
       btn.onclick = () => {
+        collectMockFromDom();
         mockRules.splice(Number(btn.getAttribute("data-mock-del")), 1);
         saveJson(STORAGE_MOCK, mockRules);
+        renderMockPanel();
+      };
+    });
+    list.querySelectorAll("[data-mock-action]").forEach((sel) => {
+      sel.onchange = () => {
+        collectMockFromDom();
         renderMockPanel();
       };
     });
@@ -296,24 +479,40 @@
 
   function collectMockFromDom() {
     const next = [];
-    document.querySelectorAll("#mockRuleList .tool-row").forEach((row, i) => {
+    document.querySelectorAll("#mockRuleList .tool-row").forEach((row) => {
+      const i = Number(row.getAttribute("data-mock-index"));
       const old = mockRules[i] || { id: uid() };
-      next.push({
+      const action = row.querySelector("[data-mock-action]")?.value || "mock";
+      const removeRaw = row.querySelector("[data-mock-rw-remove]")?.value || "";
+      const rewriteBodyEnabled = row.querySelector("[data-mock-rw-body-on]")?.checked === true;
+      const item = {
         id: old.id || uid(),
+        group: row.querySelector("[data-mock-group]")?.value || "",
         enabled: row.querySelector("[data-mock-en]")?.checked !== false,
-        priority: 100 - i,
+        priority: 100 - next.length,
         urlContains: row.querySelector("[data-mock-url]")?.value || "",
         method: row.querySelector("[data-mock-method]")?.value || "",
-        action: row.querySelector("[data-mock-action]")?.value || "mock",
+        action,
         statusCode: Number(row.querySelector("[data-mock-code]")?.value || 200),
         delayMs: Number(row.querySelector("[data-mock-delay]")?.value || 0),
         times: Number(row.querySelector("[data-mock-times]")?.value ?? -1),
         responseBody: row.querySelector("[data-mock-body]")?.value || "",
-        contentType: "application/json; charset=utf-8"
-      });
+        contentType: old.contentType || "application/json; charset=utf-8",
+        rewriteUrl: row.querySelector("[data-mock-rw-url]")?.value || "",
+        rewriteMethod: row.querySelector("[data-mock-rw-method]")?.value || "",
+        rewriteBodyEnabled,
+        setHeaders: linesToHeaders(row.querySelector("[data-mock-rw-headers]")?.value || ""),
+        removeHeaders: removeRaw.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+      };
+      if (rewriteBodyEnabled) {
+        item.rewriteBody = row.querySelector("[data-mock-rw-body]")?.value ?? "";
+      }
+      next.push(item);
     });
-    mockRules = next;
-    saveJson(STORAGE_MOCK, mockRules);
+    if (document.querySelectorAll("#mockRuleList .tool-row").length) {
+      mockRules = next;
+      saveJson(STORAGE_MOCK, mockRules);
+    }
   }
 
   function renderThrottlePanel() {
@@ -375,9 +574,11 @@
     document.getElementById("btnAddMock")?.addEventListener("click", () => {
       collectMockFromDom();
       mockRules.push({
-        id: uid(), enabled: true, priority: 0, urlContains: "", method: "",
+        id: uid(), group: "", enabled: true, priority: 0, urlContains: "", method: "",
         action: "mock", statusCode: 200, delayMs: 0, times: -1,
-        responseBody: "{\"code\":0,\"msg\":\"mock\"}", contentType: "application/json; charset=utf-8"
+        responseBody: "{\"code\":0,\"msg\":\"mock\"}", contentType: "application/json; charset=utf-8",
+        rewriteUrl: "", rewriteMethod: "", rewriteBody: "", rewriteBodyEnabled: false,
+        setHeaders: {}, removeHeaders: []
       });
       saveJson(STORAGE_MOCK, mockRules);
       renderMockPanel();
@@ -385,7 +586,16 @@
     document.getElementById("btnSyncMock")?.addEventListener("click", () => {
       collectMockFromDom();
       pushMockRules();
-      global.setStatus("Mock 已同步到手机", "ok");
+      global.setStatus("规则已同步到手机", "ok");
+    });
+    document.getElementById("btnExportMock")?.addEventListener("click", exportMockRules);
+    document.getElementById("btnImportMock")?.addEventListener("click", () => {
+      document.getElementById("mockImportFile")?.click();
+    });
+    document.getElementById("mockImportFile")?.addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      importMockRules(file);
+      e.target.value = "";
     });
     document.getElementById("btnClearMock")?.addEventListener("click", () => {
       mockRules = [];
@@ -436,6 +646,9 @@
     syncToPhone,
     evaluateAssert,
     exportJson,
-    exportHar
+    exportHar,
+    createRuleFromEvent,
+    exportMockRules,
+    importMockRules
   };
 })(window);

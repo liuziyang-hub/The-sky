@@ -1,0 +1,1279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Realtime Debug Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --surface: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --line-strong: #d1d5db;
+      --accent: #2563eb;
+      --accent-soft: #eff6ff;
+      --ok: #059669;
+      --ok-bg: #ecfdf5;
+      --warn: #d97706;
+      --warn-bg: #fffbeb;
+      --err: #dc2626;
+      --err-bg: #fef2f2;
+      --font: "DM Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "JetBrains Mono", Consolas, monospace;
+      --log-h: 240px;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: grid;
+      grid-template-rows: auto auto auto 1fr auto;
+      font-family: var(--font);
+      color: var(--text);
+      background: var(--bg);
+      overflow: hidden;
+    }
+    button, tr.clickable { cursor: pointer; }
+    button {
+      font: 600 13px/1 var(--font);
+      border: 1px solid var(--line-strong);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+    button:hover { background: #f9fafb; }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    button.primary:hover { filter: brightness(1.05); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    input, select {
+      font: 13px/1.3 var(--mono);
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+
+    /* Header */
+    .top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 18px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+    }
+    .brand {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+    }
+    .brand span { color: var(--accent); }
+    .conn { flex: 1; display: flex; gap: 8px; min-width: 0; }
+    .conn input { flex: 1; min-width: 160px; }
+    .top .hint-inline {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .mode-seg {
+      display: inline-flex;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .mode-seg button {
+      border: 0;
+      border-radius: 0;
+      padding: 8px 12px;
+      background: #fff;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .mode-seg button.on {
+      background: var(--accent);
+      color: #fff;
+    }
+    .mode-seg button + button { border-left: 1px solid var(--line-strong); }
+    .mode-seg button.on + button { border-left-color: var(--accent); }
+    .conn.lan-only input { flex: 1; min-width: 160px; }
+    .conn.usb-only { display: none; }
+    body.mode-usb .conn.lan-only { display: none; }
+    body.mode-usb .conn.usb-only { display: flex; flex: 1; gap: 8px; min-width: 0; }
+    body.mode-usb #panelLan { display: none; }
+    body.mode-lan #panelUsb { display: none; }
+    .devices {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 10px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+    .devices .label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+    .device-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line-strong);
+      background: #f9fafb;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font: 600 12px/1.2 var(--mono);
+      color: var(--text);
+    }
+    .device-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .device-chip .meta { color: var(--muted); font-weight: 500; }
+    .device-chip.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .device-card {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      min-width: 220px;
+      max-width: 320px;
+      border: 1px solid var(--line-strong);
+      background: #fff;
+      border-radius: 12px;
+      padding: 12px 14px;
+      text-align: left;
+      font: 600 13px/1.3 var(--font);
+      box-shadow: var(--shadow);
+    }
+    .device-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .device-card.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      box-shadow: 0 0 0 2px rgba(37,99,235,.15);
+    }
+    .device-card .model {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .device-card .uid {
+      font: 600 12px/1.3 var(--mono);
+      color: var(--accent);
+      word-break: break-all;
+    }
+    .device-card .meta {
+      font: 500 12px/1.3 var(--font);
+      color: var(--muted);
+    }
+    .devices-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      flex-wrap: wrap;
+    }
+    .devices-head .spacer { flex: 1; }
+    .manual-uid {
+      display: none;
+      width: 100%;
+      gap: 8px;
+      margin-top: 8px;
+      align-items: center;
+    }
+    .manual-uid.show { display: flex; }
+    .manual-uid input { flex: 1; min-width: 160px; }
+    body.mode-lan .conn.lan-actions { display: flex; gap: 8px; align-items: center; }
+    .conn.lan-actions { display: none; }
+    #devicesEmpty { font-size: 12px; color: var(--muted); }
+    #status {
+      font: 600 13px/1 var(--font);
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #f3f4f6;
+      color: var(--muted);
+      white-space: nowrap;
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #status.ok { background: var(--ok-bg); color: var(--ok); }
+    #status.err { background: var(--err-bg); color: var(--err); }
+    #status.warn { background: var(--warn-bg); color: var(--warn); }
+
+    /* Metrics */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      padding: 12px 18px;
+      background: var(--bg);
+    }
+    .metric {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 12px 14px;
+    }
+    .metric .k {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .metric .v {
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    @media (max-width: 900px) {
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    /* Workspace */
+    .workspace {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 12px;
+      padding: 0 18px 12px;
+    }
+    .card {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .card-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fafafa;
+    }
+    .card-head h2 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .badge {
+      font: 600 12px/1 var(--mono);
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-radius: 999px;
+      padding: 4px 8px;
+    }
+    .card-head .spacer { flex: 1; }
+    .tools {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .tools input { flex: 1; min-width: 140px; }
+    .seg {
+      display: inline-flex;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .seg button {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      padding: 7px 12px;
+    }
+    .seg button + button { border-left: 1px solid var(--line-strong); }
+    .seg button.on {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    /* Network table */
+    .table-wrap { flex: 1; min-height: 0; overflow: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      text-align: left;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: #f9fafb;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      white-space: nowrap;
+    }
+    tbody td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    tr.clickable:hover td { background: #f8fafc; }
+    tr.clickable.on td {
+      background: var(--accent-soft);
+    }
+    td.mono, th.mono { font-family: var(--mono); font-size: 12px; }
+    .pill {
+      display: inline-block;
+      font: 700 12px/1 var(--mono);
+      padding: 4px 8px;
+      border-radius: 999px;
+    }
+    .pill-ok { background: var(--ok-bg); color: var(--ok); }
+    .pill-warn { background: var(--warn-bg); color: var(--warn); }
+    .pill-err { background: var(--err-bg); color: var(--err); }
+    .pill-method {
+      background: #f3f4f6;
+      color: #374151;
+      min-width: 52px;
+      text-align: center;
+    }
+    .url-cell {
+      font-family: var(--mono);
+      font-size: 12px;
+      word-break: break-all;
+      color: #1f2937;
+    }
+    .mark { background: #fde68a; border-radius: 2px; }
+    .pill-mock { background: #ede9fe; color: #6d28d9; }
+    .assert-line { padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
+    .assert-line.pass { border-left: 3px solid var(--ok); }
+    .assert-line.fail { border-left: 3px solid var(--err); background: #fff5f5; }
+    .assert-line .meta { color: var(--muted); font-family: var(--mono); margin-top: 4px; word-break: break-all; }
+    .tool-pane { padding: 12px 14px; overflow: auto; height: 100%; }
+    .tool-pane .tool-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .tool-row {
+      display: grid;
+      grid-template-columns: auto 1fr 72px 90px 1fr 90px 100px auto;
+      gap: 6px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      background: #fafafa;
+    }
+    #mockRuleList .tool-row {
+      grid-template-columns: auto 1fr 72px 90px 72px 80px 100px auto;
+    }
+    .tool-row textarea {
+      grid-column: 1 / -1;
+      min-height: 72px;
+      font: 12px/1.4 var(--mono);
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      padding: 8px;
+    }
+    .tool-row label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .throttle-box {
+      display: grid;
+      grid-template-columns: 140px 1fr 1fr auto;
+      gap: 8px;
+      align-items: center;
+      max-width: 720px;
+    }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 8px 0 0;
+      line-height: 1.5;
+    }
+
+    .detail {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 14px;
+      background: #fff;
+    }
+    .pane { display: none; height: 100%; }
+    .pane.on { display: block; }
+    .pane-screen {
+      display: none;
+      height: 100%;
+      min-height: 0;
+      align-items: center;
+      justify-content: center;
+      background: #111827;
+      padding: 16px;
+    }
+    .pane-screen.on { display: flex; }
+    #screenImg {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 10px;
+      background: #000;
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+      padding: 24px 8px;
+      text-align: center;
+    }
+    pre {
+      margin: 0 0 14px;
+      padding: 12px;
+      background: #f9fafb;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font: 12px/1.5 var(--mono);
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow: auto;
+      color: #111827;
+    }
+    h3 {
+      margin: 0 0 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    /* Logs */
+    .bottom {
+      display: grid;
+      grid-template-rows: 5px auto minmax(100px, var(--log-h));
+      border-top: 1px solid var(--line);
+      background: var(--surface);
+      min-height: 0;
+    }
+    .bottom.collapsed { grid-template-rows: 5px auto 0; }
+    .bottom.collapsed #logView { display: none; }
+    .splitter { cursor: ns-resize; background: var(--line); }
+    .log-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fafafa;
+    }
+    .log-bar h2 { margin: 0; font-size: 14px; font-weight: 700; }
+    .log-bar .spacer { flex: 1; }
+    #logView {
+      overflow: auto;
+      padding: 8px 18px;
+      font: 13px/1.5 var(--mono);
+      background: #fff;
+      white-space: pre-wrap;
+      word-break: break-all;
+      min-height: 0;
+    }
+    .log-line { padding: 2px 0; }
+    .lv {
+      display: inline-block;
+      min-width: 18px;
+      text-align: center;
+      font-weight: 700;
+      margin-right: 6px;
+    }
+    .log-V .lv, .log-D .lv { color: #2563eb; }
+    .log-I .lv { color: #4b5563; }
+    .log-W .lv { color: var(--warn); }
+    .log-E .lv, .log-F .lv { color: var(--err); }
+
+    #mNative, #mJavaSub, #mAvailSub, #mLow, #metricsTs, #metricsRaw { display: none; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">Realtime <span>Debug</span></div>
+    <div class="mode-seg" id="modeSeg">
+      <button type="button" data-mode="lan" class="on">局域网</button>
+      <button type="button" data-mode="usb">USB</button>
+    </div>
+    <div class="hint-inline" id="modeHint">同网点选机型连接</div>
+    <div class="conn lan-actions">
+      <button id="btnDisconnect" type="button" disabled>断开</button>
+    </div>
+    <div class="conn usb-only">
+      <button id="btnUsbConnect" class="primary" type="button">建立 USB 通道并连接</button>
+      <button id="btnUsbRefresh" type="button">刷新设备</button>
+      <button id="btnDisconnectUsb" type="button" disabled>断开</button>
+    </div>
+    <div id="status">未连接</div>
+  </header>
+
+  <section class="devices" id="panelLan">
+    <div class="devices-head">
+      <span class="label">同网手机（点选连接）</span>
+      <span class="badge" id="deviceCount">0</span>
+      <span class="spacer"></span>
+      <button id="btnScanLan" type="button">刷新扫描</button>
+      <button id="btnToggleManualUid" type="button">手动 UID</button>
+    </div>
+    <span id="devicesEmpty">正在发现同网手机…请打开 Dev App，几秒后出现机型列表，点选即可连接</span>
+    <div id="deviceList"></div>
+    <div class="manual-uid" id="manualUidRow">
+      <input id="uidInput" type="text" placeholder="仅在列表没有时手动输入 UID" spellcheck="false" />
+      <button id="btnConnect" class="primary" type="button">连接</button>
+    </div>
+  </section>
+
+  <section class="devices" id="panelUsb">
+    <span class="label">USB 设备</span>
+    <span id="usbEmpty">用数据线连接手机，开启开发者模式 / USB 调试</span>
+    <div id="usbList"></div>
+  </section>
+
+  <section class="metrics">
+    <div class="metric"><div class="k">CPU</div><div class="v" id="mCpu">—</div></div>
+    <div class="metric"><div class="k">Java 堆</div><div class="v" id="mJava">—</div></div>
+    <div class="metric"><div class="k">PSS 内存</div><div class="v" id="mPss">—</div></div>
+    <div class="metric"><div class="k">系统可用</div><div class="v" id="mAvail">—</div></div>
+    <div class="metric"><div class="k">线程数</div><div class="v" id="mThreads">—</div></div>
+  </section>
+
+  <section class="workspace">
+    <article class="card">
+      <div class="card-head">
+        <h2>网络请求</h2>
+        <span class="badge" id="count">0</span>
+        <span class="spacer"></span>
+        <button id="btnExportJson" type="button">导出 JSON</button>
+        <button id="btnExportHar" type="button">导出 HAR</button>
+        <button id="btnClear" type="button">清空</button>
+      </div>
+      <div class="tools">
+        <input id="netSearch" type="text" placeholder="搜索 URL / 内容" />
+        <select id="netMethod">
+          <option value="">全部方法</option>
+          <option value="GET">GET</option>
+          <option value="POST">POST</option>
+          <option value="PUT">PUT</option>
+          <option value="DELETE">DELETE</option>
+          <option value="PATCH">PATCH</option>
+        </select>
+        <select id="netStatus">
+          <option value="">全部状态</option>
+          <option value="2xx">成功 2xx</option>
+          <option value="4xx">客户端 4xx</option>
+          <option value="5xx">服务端 5xx</option>
+          <option value="err">失败</option>
+          <option value="mock">仅 Mock</option>
+        </select>
+        <select id="netSlow">
+          <option value="">耗时</option>
+          <option value="500">≥500ms</option>
+          <option value="1000">≥1s</option>
+          <option value="3000">≥3s</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:86px">时间</th>
+              <th style="width:72px">方法</th>
+              <th style="width:72px">状态</th>
+              <th style="width:72px">耗时</th>
+              <th>地址</th>
+            </tr>
+          </thead>
+          <tbody id="events"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h2>详情 / 工具</h2>
+        <div class="seg" id="rightSeg">
+          <button type="button" class="on" data-right="detail">请求</button>
+          <button type="button" data-right="assert">断言</button>
+          <button type="button" data-right="mock">Mock</button>
+          <button type="button" data-right="throttle">弱网</button>
+          <button type="button" data-right="screen">画面</button>
+        </div>
+        <span class="spacer"></span>
+        <button id="btnSyncAllTools" type="button">同步到手机</button>
+        <span class="badge" id="screenTs">—</span>
+      </div>
+      <div class="detail pane on" id="paneDetail">
+        <div id="detailEmpty" class="empty">在左侧表格点一行，这里显示请求/响应内容</div>
+        <div id="detail" hidden></div>
+      </div>
+      <div class="pane tool-pane" id="paneAssert">
+        <div class="tool-actions">
+          <button id="btnAddAssert" type="button">新增断言</button>
+          <button id="btnSaveAssert" class="primary" type="button">保存断言</button>
+        </div>
+        <p class="hint">断言在控制台本地执行：状态码 / JSONPath / 耗时。命中失败会标红。</p>
+        <div id="assertRuleList"></div>
+        <h3 style="margin-top:14px">断言结果</h3>
+        <div id="assertResultList"></div>
+      </div>
+      <div class="pane tool-pane" id="paneMock">
+        <div class="tool-actions">
+          <button id="btnAddMock" type="button">新增 Mock</button>
+          <button id="btnSyncMock" class="primary" type="button">同步到手机</button>
+          <button id="btnClearMock" type="button">清空</button>
+        </div>
+        <p class="hint">按 URL 包含匹配；Mock 直接返回，Abort 抛失败。需先连接手机再同步。</p>
+        <div id="mockRuleList"></div>
+      </div>
+      <div class="pane tool-pane" id="paneThrottle">
+        <div class="throttle-box">
+          <select id="throttleProfile">
+            <option value="none">无限制</option>
+            <option value="3g">3G（约 400ms）</option>
+            <option value="slow">慢网（约 1.2s）</option>
+            <option value="lossy">丢包 15%</option>
+            <option value="timeout">高延迟 8s</option>
+            <option value="custom">自定义</option>
+          </select>
+          <input id="throttleDelay" type="number" min="0" placeholder="延迟 ms" />
+          <input id="throttleFail" type="number" min="0" max="100" placeholder="失败率 %" />
+          <button id="btnApplyThrottle" class="primary" type="button">应用弱网</button>
+        </div>
+        <p class="hint">弱网在手机 OkHttp 拦截器生效：全局延迟 + 随机失败率，可与单条 Mock 延迟叠加。</p>
+      </div>
+      <div class="pane-screen" id="paneScreen">
+        <div id="screenEmpty" class="empty" style="color:#9ca3af">连接后显示 App 画面（约 1 帧/秒）</div>
+        <img id="screenImg" alt="screen" hidden />
+      </div>
+    </article>
+  </section>
+
+  <section class="bottom" id="bottom">
+    <div class="splitter" id="splitter"></div>
+    <div class="log-bar">
+      <h2>实时日志</h2>
+      <span class="badge" id="logCount">0</span>
+      <input id="logSearch" type="text" placeholder="搜索日志" style="width:200px" />
+      <select id="logLevel">
+        <option value="">全部级别</option>
+        <option value="V">Verbose+</option>
+        <option value="D">Debug+</option>
+        <option value="I">Info+</option>
+        <option value="W">Warn+</option>
+        <option value="E">Error+</option>
+      </select>
+      <span class="spacer"></span>
+      <button id="btnPauseLog" type="button">暂停</button>
+      <button id="btnCopyLog" type="button">复制</button>
+      <button id="btnClearLog" type="button">清空</button>
+      <button id="btnToggleLog" type="button">收起日志</button>
+    </div>
+    <div id="logView"></div>
+  </section>
+
+  <span id="mJavaSub"></span><span id="mNative"></span><span id="mAvailSub"></span>
+  <span id="mLow"></span><span id="metricsTs"></span><pre id="metricsRaw"></pre>
+
+  <script src="./tools.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const eventsEl = $("events");
+    const detailEl = $("detail");
+    const detailEmpty = $("detailEmpty");
+    const statusEl = $("status");
+    const countEl = $("count");
+    const btnConnect = $("btnConnect");
+    const btnDisconnect = $("btnDisconnect");
+    const btnDisconnectUsb = $("btnDisconnectUsb");
+    const btnUsbConnect = $("btnUsbConnect");
+    const btnUsbRefresh = $("btnUsbRefresh");
+    const uidInput = $("uidInput");
+    const deviceListEl = $("deviceList");
+    const devicesEmpty = $("devicesEmpty");
+    const usbListEl = $("usbList");
+    const usbEmpty = $("usbEmpty");
+    const modeHint = $("modeHint");
+    const logView = $("logView");
+    const logCountEl = $("logCount");
+    const screenImg = $("screenImg");
+    const screenEmpty = $("screenEmpty");
+    const netSearch = $("netSearch");
+    const netMethod = $("netMethod");
+    const netStatus = $("netStatus");
+    const logSearch = $("logSearch");
+    const logLevel = $("logLevel");
+    const bottom = $("bottom");
+    const paneDetail = $("paneDetail");
+    const paneScreen = $("paneScreen");
+    const paneAssert = $("paneAssert");
+    const paneMock = $("paneMock");
+    const paneThrottle = $("paneThrottle");
+    const netSlow = $("netSlow");
+
+    let socket = null;
+    let connectedUid = "";
+    let latestDevices = [];
+    let latestUsb = [];
+    let connectMode = localStorage.getItem("realtime_debug_mode") || "lan";
+    const events = [];
+    window.events = events;
+    Object.defineProperty(window, "socket", { get: () => socket, set: (v) => { socket = v; } });
+    let activeIndex = -1;
+    const logs = [];
+    const MAX_LOGS = 2000;
+    let logPaused = false;
+    let logStickBottom = true;
+    const LEVEL_ORDER = { V: 0, D: 1, I: 2, W: 3, E: 4, F: 5, S: 5 };
+
+    const params = new URLSearchParams(location.search);
+    const fromUid = params.get("uid");
+    const fromMode = params.get("mode");
+    if (fromMode === "usb" || fromMode === "lan") connectMode = fromMode;
+    const savedUid = localStorage.getItem("realtime_debug_uid");
+    if (fromUid) uidInput.value = fromUid;
+    else if (savedUid) uidInput.value = savedUid;
+    const savedLogH = localStorage.getItem("realtime_log_h");
+    if (savedLogH) document.documentElement.style.setProperty("--log-h", savedLogH + "px");
+
+    function setMode(mode) {
+      connectMode = mode === "usb" ? "usb" : "lan";
+      localStorage.setItem("realtime_debug_mode", connectMode);
+      document.body.classList.toggle("mode-usb", connectMode === "usb");
+      document.body.classList.toggle("mode-lan", connectMode === "lan");
+      document.querySelectorAll("#modeSeg button").forEach((b) => {
+        b.classList.toggle("on", b.getAttribute("data-mode") === connectMode);
+      });
+      modeHint.textContent = connectMode === "usb"
+        ? "跨网：USB + adb forward 传数据"
+        : "同网点选机型，无需手输 UID";
+      if (connectMode === "usb") refreshUsb();
+      else {
+        refreshDevices();
+        scanLanDevices(false);
+      }
+    }
+
+    function setStatus(text, cls) {
+      statusEl.textContent = text;
+      statusEl.title = text;
+      statusEl.className = cls || "";
+    }
+    window.setStatus = setStatus;
+
+    function setConnectedUi(connected) {
+      btnConnect.disabled = connected;
+      btnDisconnect.disabled = !connected;
+      btnUsbConnect.disabled = connected;
+      btnDisconnectUsb.disabled = !connected;
+    }
+
+    function renderDevices(devices) {
+      latestDevices = devices || [];
+      deviceListEl.innerHTML = "";
+      const countEl = $("deviceCount");
+      if (countEl) countEl.textContent = String(latestDevices.length);
+      if (!latestDevices.length) {
+        devicesEmpty.style.display = "";
+        return;
+      }
+      devicesEmpty.style.display = "none";
+      latestDevices.forEach((d) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "device-card" + (connectedUid && connectedUid === d.uid ? " active" : "");
+        const model = d.model || "未知机型";
+        const kind = d.kind || "";
+        const ip = d.ip || "";
+        btn.innerHTML =
+          `<span class="model">${esc(model)}</span>` +
+          `<span class="uid">UID ${esc(d.uid)}</span>` +
+          `<span class="meta">${esc(kind)}${kind && ip ? " · " : ""}${esc(ip)}${d.source ? " · " + esc(d.source) : ""}</span>`;
+        btn.title = `${model}\nUID: ${d.uid}\n${d.ws || ""}`;
+        btn.onclick = () => {
+          uidInput.value = d.uid;
+          connectByUid(d.uid);
+        };
+        deviceListEl.appendChild(btn);
+      });
+    }
+
+    async function scanLanDevices(showStatus) {
+      if (connectMode !== "lan") return;
+      if (showStatus !== false) setStatus("正在扫描同网手机…", "warn");
+      const btn = $("btnScanLan");
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch("/api/scan", { cache: "no-store" });
+        const data = await res.json();
+        renderDevices(data.devices || []);
+        if (showStatus !== false) {
+          const n = (data.devices || []).length;
+          setStatus(n ? `发现 ${n} 台手机，点选连接` : "未发现设备（确认同网且 Dev App 已开）", n ? "ok" : "warn");
+        }
+      } catch (e) {
+        if (showStatus !== false) setStatus("扫描失败：控制台服务未启动", "err");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function renderUsb(devices) {
+      latestUsb = devices || [];
+      usbListEl.innerHTML = "";
+      if (!latestUsb.length) {
+        usbEmpty.style.display = "";
+        return;
+      }
+      usbEmpty.style.display = "none";
+      latestUsb.forEach((d) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const ready = d.state === "device";
+        btn.className = "device-chip" + (ready ? "" : "");
+        btn.disabled = !ready;
+        const port = d.localPort ? ` · :${d.localPort}` : "";
+        btn.innerHTML = `<span>${esc(d.model || d.serial)}</span><span class="meta">${esc(d.serial)} · ${esc(d.state)}${port}</span>`;
+        btn.title = d.serial;
+        btn.onclick = () => connectUsb(d.serial);
+        usbListEl.appendChild(btn);
+      });
+    }
+
+    async function refreshDevices() {
+      if (connectMode !== "lan") return;
+      try {
+        const res = await fetch("/api/devices", { cache: "no-store" });
+        if (!res.ok) throw new Error("api " + res.status);
+        const data = await res.json();
+        renderDevices(data.devices || []);
+      } catch (e) {
+        devicesEmpty.style.display = "";
+        devicesEmpty.textContent = "发现服务未启动：请运行 tools/debug-realtime/start-console.bat";
+      }
+    }
+
+    async function refreshUsb() {
+      if (connectMode !== "usb") return;
+      try {
+        const res = await fetch("/api/usb/status", { cache: "no-store" });
+        const data = await res.json();
+        if (!data.adb) {
+          usbEmpty.style.display = "";
+          usbEmpty.textContent = "未找到 adb（请安装 platform-tools 或设置 ADB 环境变量）";
+          usbListEl.innerHTML = "";
+          return;
+        }
+        renderUsb(data.devices || []);
+        if (!(data.devices || []).length) {
+          usbEmpty.style.display = "";
+          usbEmpty.textContent = "未检测到 USB 设备 · 开开发者模式并授权本机调试";
+        }
+      } catch (e) {
+        usbEmpty.style.display = "";
+        usbEmpty.textContent = "发现服务未启动：请运行 start-console.bat";
+      }
+    }
+
+    async function resolveUid(uid, refresh) {
+      const q = (uid || "").trim();
+      if (!q) return null;
+      if (!refresh) {
+        const local = latestDevices.find((d) => d.uid === q)
+          || latestDevices.filter((d) => d.uid.includes(q) || d.uid.endsWith(q));
+        if (local && !Array.isArray(local)) return local;
+        if (Array.isArray(local) && local.length === 1) return local[0];
+      }
+      const url = "/api/device?uid=" + encodeURIComponent(q) + (refresh ? "&refresh=1" : "");
+      const res = await fetch(url, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok || !data.ok) return null;
+      return data.device;
+    }
+
+    async function connectByUid(uid) {
+      const q = (uid || uidInput.value || "").trim();
+      if (!q) { setStatus("请填写 UID", "err"); return; }
+      setStatus("按 UID 扫描同网设备…");
+      let device = null;
+      try {
+        device = await resolveUid(q, true);
+        await refreshDevices();
+      } catch (e) {
+        setStatus("发现服务不可用：请运行 start-console.bat", "err");
+        return;
+      }
+      if (!device) {
+        setStatus("未找到该 UID（同网 + App 已开 + DoKit 复制 UID）", "err");
+        return;
+      }
+      uidInput.value = device.uid;
+      localStorage.setItem("realtime_debug_uid", device.uid);
+      connectWs(device.ws, device.uid);
+    }
+
+    async function connectUsb(serial) {
+      setStatus("建立 USB 通道（adb forward）…");
+      try {
+        const q = serial ? ("?serial=" + encodeURIComponent(serial)) : "";
+        const res = await fetch("/api/usb/setup" + q, { cache: "no-store" });
+        const data = await res.json();
+        await refreshUsb();
+        if (!data.ok) {
+          setStatus(data.hint || data.error || "USB 通道失败", "err");
+          if (data.devices) renderUsb(data.devices);
+          return;
+        }
+        if (data.uid) {
+          uidInput.value = data.uid;
+          localStorage.setItem("realtime_debug_uid", data.uid);
+        }
+        if (data.warn) setStatus(data.warn, "warn");
+        connectWs(data.ws, data.uid || data.serial);
+      } catch (e) {
+        setStatus("USB 接口失败：请确认 server.py 已启动", "err");
+      }
+    }
+
+    function connectWs(url, uid) {
+      disconnect(false);
+      setStatus("连接中…");
+      try { socket = new WebSocket(url); }
+      catch (e) { setStatus("连接失败", "err"); return; }
+      socket.onopen = () => {
+        connectedUid = uid || "";
+        setStatus("已连接 · " + (uid || url), "ok");
+        setConnectedUi(true);
+        renderDevices(latestDevices);
+        renderUsb(latestUsb);
+        try { window.RealtimeTools && window.RealtimeTools.syncToPhone(); } catch (e) {}
+      };
+      socket.onclose = () => {
+        connectedUid = "";
+        setStatus("已断开", "err");
+        setConnectedUi(false);
+        socket = null;
+        renderDevices(latestDevices);
+        renderUsb(latestUsb);
+      };
+      socket.onerror = () => setStatus("连接错误", "err");
+      socket.onmessage = (msg) => {
+        try {
+          const data = JSON.parse(msg.data);
+          if (data.type === "hello") {
+            connectedUid = data.uid || uid || connectedUid;
+            setStatus("已连接 · " + (connectedUid || url), "ok");
+            if (data.uid) {
+              uidInput.value = data.uid;
+              localStorage.setItem("realtime_debug_uid", data.uid);
+            }
+            renderDevices(latestDevices);
+            return;
+          }
+          if (data.type === "config") {
+            window.RealtimeTools && window.RealtimeTools.onConfig(data);
+            return;
+          }
+          if (data.type === "cmd_ack") {
+            setStatus((data.ok ? "OK · " : "失败 · ") + (data.action || "") + " " + (data.message || ""), data.ok ? "ok" : "err");
+            return;
+          }
+          if (data.type === "log") { appendLog(data); return; }
+          if (data.type === "metrics") { renderMetrics(data); return; }
+          if (data.type === "screen") { renderScreen(data); return; }
+          if (data.type === "http") {
+            events.push(data);
+            window.RealtimeTools && window.RealtimeTools.onHttpEvent(data);
+            renderList();
+            return;
+          }
+        } catch (e) {
+          appendLog({ ts: Date.now(), level: "W", tag: "raw", msg: String(msg.data) });
+        }
+      };
+    }
+    function pillClass(code) {
+      if (code < 0 || code >= 400) return "pill-err";
+      if (code >= 300) return "pill-warn";
+      return "pill-ok";
+    }
+    function esc(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    function formatTime(ts) {
+      return new Date(ts || Date.now()).toLocaleTimeString();
+    }
+    function pretty(value) {
+      if (value == null) return "";
+      if (typeof value === "object") {
+        try { return JSON.stringify(value, null, 2); } catch (e) { return String(value); }
+      }
+      const s = String(value);
+      try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return s; }
+    }
+    function kb(v) {
+      if (v == null || v < 0) return "—";
+      if (v >= 1024) return (v / 1024).toFixed(1) + " MB";
+      return v + " KB";
+    }
+    window.esc = esc;
+    window.formatTime = formatTime;
+    function highlight(text, q) {
+      const raw = String(text == null ? "" : text);
+      if (!q) return esc(raw);
+      const lower = raw.toLowerCase(), needle = q.toLowerCase();
+      let out = "", i = 0;
+      while (i < raw.length) {
+        const hit = lower.indexOf(needle, i);
+        if (hit < 0) { out += esc(raw.slice(i)); break; }
+        out += esc(raw.slice(i, hit)) + `<span class="mark">${esc(raw.slice(hit, hit + needle.length))}</span>`;
+        i = hit + needle.length;
+      }
+      return out;
+    }
+    function setRight(mode) {
+      document.querySelectorAll("#rightSeg button").forEach((b) => {
+        b.classList.toggle("on", b.getAttribute("data-right") === mode);
+      });
+      paneDetail.classList.toggle("on", mode === "detail");
+      paneAssert.classList.toggle("on", mode === "assert");
+      paneMock.classList.toggle("on", mode === "mock");
+      paneThrottle.classList.toggle("on", mode === "throttle");
+      paneScreen.classList.toggle("on", mode === "screen");
+    }
+    function matchNet(ev) {
+      const method = (netMethod.value || "").toUpperCase();
+      if (method && String(ev.method || "").toUpperCase() !== method) return false;
+      const st = netStatus.value;
+      const code = Number(ev.code);
+      if (st === "2xx" && !(code >= 200 && code < 300)) return false;
+      if (st === "4xx" && !(code >= 400 && code < 500)) return false;
+      if (st === "5xx" && !(code >= 500 && code < 600)) return false;
+      if (st === "err" && !(code < 0 || code >= 400 || ev.error)) return false;
+      if (st === "mock" && !ev.mocked) return false;
+      const slow = Number(netSlow && netSlow.value);
+      if (slow && !(Number(ev.durationMs) >= slow)) return false;
+      const q = (netSearch.value || "").trim().toLowerCase();
+      if (!q) return true;
+      return [ev.url, ev.method, ev.code, ev.error, ev.requestBody, ev.responseBody, ev.ruleId].join(" ").toLowerCase().includes(q);
+    }
+    function matchLog(ev) {
+      const minLevel = logLevel.value;
+      const level = String(ev.level || "I").charAt(0).toUpperCase();
+      if (minLevel) {
+        const need = LEVEL_ORDER[minLevel] ?? 0;
+        const got = LEVEL_ORDER[level] ?? 2;
+        if (got < need) return false;
+      }
+      const q = (logSearch.value || "").trim().toLowerCase();
+      if (!q) return true;
+      return [ev.tag, ev.msg, ev.raw, ev.level].join(" ").toLowerCase().includes(q);
+    }
+
+    function renderList() {
+      const httpEvents = events.map((ev, index) => ({ ev, index }))
+        .filter(x => x.ev.type === "http" && matchNet(x.ev));
+      const total = events.filter(e => e.type === "http").length;
+      countEl.textContent = httpEvents.length === total ? String(total) : `${httpEvents.length}/${total}`;
+      eventsEl.innerHTML = "";
+      const q = (netSearch.value || "").trim();
+      httpEvents.slice().reverse().forEach(({ ev, index }) => {
+        const tr = document.createElement("tr");
+        tr.className = "clickable" + (index === activeIndex ? " on" : "");
+        const mockPill = ev.mocked ? `<span class="pill pill-mock">MOCK</span> ` : "";
+        tr.innerHTML =
+          `<td class="mono">${formatTime(ev.ts)}</td>` +
+          `<td><span class="pill pill-method">${esc(ev.method || "?")}</span></td>` +
+          `<td>${mockPill}<span class="pill ${pillClass(ev.code)}">${ev.code}</span></td>` +
+          `<td class="mono">${ev.durationMs != null ? ev.durationMs + " ms" : "—"}</td>` +
+          `<td class="url-cell">${highlight(ev.url || "", q)}</td>`;
+        tr.onclick = () => showDetail(index);
+        eventsEl.appendChild(tr);
+      });
+    }
+
+    function showDetail(index) {
+      activeIndex = index;
+      const ev = events[index];
+      if (!ev) return;
+      setRight("detail");
+      detailEmpty.hidden = true;
+      detailEl.hidden = false;
+      const curl = (window.RealtimeTools && window.RealtimeTools.toCurl(ev)) || "";
+      detailEl.innerHTML =
+        `<div class="tool-actions" style="margin-bottom:12px">
+          <button type="button" id="btnReplayOne" class="primary">Replay</button>
+          <button type="button" id="btnCopyCurl">复制 cURL</button>
+          ${ev.mocked ? `<span class="pill pill-mock">MOCK ${esc(ev.ruleId || "")}</span>` : ""}
+          ${ev.throttledMs ? `<span class="pill pill-warn">throttle ${esc(ev.throttledMs)}ms</span>` : ""}
+        </div>` +
+        `<h3>概要</h3><pre>${esc(pretty({
+          method: ev.method, url: ev.url, code: ev.code,
+          durationMs: ev.durationMs, mocked: ev.mocked || undefined,
+          ruleId: ev.ruleId || undefined, throttledMs: ev.throttledMs || undefined,
+          error: ev.error || undefined, ts: ev.ts
+        }))}</pre>` +
+        `<h3>Request Headers</h3><pre>${esc(pretty(ev.requestHeaders))}</pre>` +
+        `<h3>Request Body</h3><pre>${esc(pretty(ev.requestBody))}</pre>` +
+        `<h3>Response Headers</h3><pre>${esc(pretty(ev.responseHeaders))}</pre>` +
+        `<h3>Response Body</h3><pre>${esc(pretty(ev.responseBody))}</pre>` +
+        `<h3>cURL</h3><pre>${esc(curl)}</pre>`;
+      $("btnReplayOne").onclick = () => window.RealtimeTools && window.RealtimeTools.replay(ev);
+      $("btnCopyCurl").onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(curl);
+          setStatus("已复制 cURL", "ok");
+        } catch (e) { setStatus("复制失败", "err"); }
+      };
+      renderList();
+    }
+
+    function renderLogs() {
+      const q = (logSearch.value || "").trim();
+      const filtered = logs.filter(matchLog);
+      logView.innerHTML = "";
+      filtered.forEach((ev) => {
+        const level = (ev.level || "I").charAt(0).toUpperCase();
+        const line = document.createElement("div");
+        line.className = "log-line log-" + level;
+        const body = `${formatTime(ev.ts)} ${ev.tag || ""}: ${ev.msg || ev.raw || ""}`;
+        line.innerHTML = `<span class="lv">${level}</span>` + (q ? highlight(body, q) : esc(body));
+        logView.appendChild(line);
+      });
+      logCountEl.textContent = filtered.length === logs.length ? String(logs.length) : `${filtered.length}/${logs.length}`;
+      if (logStickBottom) logView.scrollTop = logView.scrollHeight;
+    }
+
+    function appendLog(ev) {
+      if (logPaused) return;
+      logs.push(ev);
+      while (logs.length > MAX_LOGS) logs.shift();
+      renderLogs();
+    }
+
+    function renderMetrics(ev) {
+      $("mCpu").textContent = (ev.cpuPercent != null ? ev.cpuPercent : "—") + "%";
+      $("mJava").textContent = kb(ev.javaHeapUsedKb);
+      $("mPss").textContent = kb(ev.pssKb);
+      $("mAvail").textContent = ev.availMemMb != null ? ev.availMemMb + " MB" : "—";
+      $("mThreads").textContent = ev.threads != null ? String(ev.threads) : "—";
+    }
+
+    function renderScreen(ev) {
+      if (!ev.data) return;
+      $("screenTs").textContent = formatTime(ev.ts);
+      screenEmpty.hidden = true;
+      screenImg.hidden = false;
+      screenImg.src = `data:${ev.mime || "image/jpeg"};base64,${ev.data}`;
+    }
+
+    function disconnect(updateStatus) {
+      if (socket) { socket.close(); socket = null; }
+      connectedUid = "";
+      setConnectedUi(false);
+      if (updateStatus !== false) setStatus("已断开", "err");
+      renderDevices(latestDevices);
+      renderUsb(latestUsb);
+    }
+
+    let dragging = false;
+    $("splitter").addEventListener("mousedown", (e) => {
+      dragging = true;
+      bottom.classList.remove("collapsed");
+      $("btnToggleLog").textContent = "收起日志";
+      e.preventDefault();
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      const h = Math.min(Math.max(window.innerHeight - e.clientY - 8, 100), Math.floor(window.innerHeight * 0.55));
+      document.documentElement.style.setProperty("--log-h", h + "px");
+      localStorage.setItem("realtime_log_h", String(h));
+    });
+    window.addEventListener("mouseup", () => { dragging = false; });
+
+    document.querySelectorAll("#rightSeg button").forEach((b) => {
+      b.addEventListener("click", () => setRight(b.getAttribute("data-right")));
+    });
+    document.querySelectorAll("#modeSeg button").forEach((b) => {
+      b.addEventListener("click", () => setMode(b.getAttribute("data-mode")));
+    });
+    $("btnToggleLog").onclick = () => {
+      const c = bottom.classList.toggle("collapsed");
+      $("btnToggleLog").textContent = c ? "展开日志" : "收起日志";
+    };
+    btnConnect.onclick = () => connectByUid();
+    btnDisconnect.onclick = () => disconnect();
+    btnDisconnectUsb.onclick = () => disconnect();
+    btnUsbConnect.onclick = () => connectUsb();
+    btnUsbRefresh.onclick = () => refreshUsb();
+    $("btnScanLan") && ($("btnScanLan").onclick = () => scanLanDevices(true));
+    $("btnToggleManualUid") && ($("btnToggleManualUid").onclick = () => {
+      $("manualUidRow").classList.toggle("show");
+    });
+    $("btnClear").onclick = () => {
+      events.length = 0; activeIndex = -1;
+      detailEl.hidden = true; detailEmpty.hidden = false; renderList();
+    };
+    $("btnClearLog").onclick = () => { logs.length = 0; renderLogs(); };
+    $("btnCopyLog").onclick = async () => {
+      const text = logs.filter(matchLog).map((ev) => {
+        const level = (ev.level || "I").charAt(0).toUpperCase();
+        return `[${formatTime(ev.ts)}] ${level}/${ev.tag || ""}: ${ev.msg || ev.raw || ""}`;
+      }).join("\n");
+      try { await navigator.clipboard.writeText(text); setStatus("已复制日志", "ok"); }
+      catch (e) { setStatus("复制失败", "err"); }
+    };
+    $("btnPauseLog").onclick = () => {
+      logPaused = !logPaused;
+      $("btnPauseLog").textContent = logPaused ? "继续" : "暂停";
+    };
+    netSearch.addEventListener("input", renderList);
+    netMethod.addEventListener("change", renderList);
+    netStatus.addEventListener("change", renderList);
+    if (netSlow) netSlow.addEventListener("change", renderList);
+    logSearch.addEventListener("input", renderLogs);
+    logLevel.addEventListener("change", renderLogs);
+    logView.addEventListener("scroll", () => {
+      logStickBottom = logView.scrollHeight - logView.scrollTop - logView.clientHeight < 40;
+    });
+    uidInput.addEventListener("keydown", (e) => { if (e.key === "Enter") connectByUid(); });
+    if (window.RealtimeTools) window.RealtimeTools.bindUi();
+    setMode(connectMode);
+    setInterval(() => {
+      if (connectMode === "lan") refreshDevices();
+      else refreshUsb();
+    }, 2000);
+    // LAN: 默认点选机型；仅 URL ?uid= 时自动连
+    if (fromUid) {
+      uidInput.value = fromUid;
+      connectByUid(fromUid);
+    }
+  </script>
+</body>
+</html>

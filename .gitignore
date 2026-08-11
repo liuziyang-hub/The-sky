@@ -1,0 +1,19 @@
+# Build
+.gradle/
+**/build/
+local.properties
+*.iml
+.idea/
+.DS_Store
+
+# Console runtime
+console/.devices-cache.json
+console/sys-test-report.json
+console/__pycache__/
+*.pyc
+
+# Logs
+*.log
+*.apk
+*.ap_
+*.dex
